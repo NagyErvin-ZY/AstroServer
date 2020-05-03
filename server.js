@@ -1,25 +1,44 @@
+//------------------START OF SERVICECODE------------------//
 var app = require('express')();
 var path = require('path');
 var fs = require('fs');
 const express = require('express');
 var https = require('https');
+var nodemailer = require('nodemailer');
+const knex = require('knex');
+const bcrypt = require('bcrypt');
 
+
+const database = knex({
+client: 'pg',
+connection: {
+    host : '127.0.0.1',
+    user: 'postgres',
+    password: 'admin',
+    database: 'angyalvonal'
+}
+
+});
+
+
+
+var transporter = nodemailer.createTransport({
+    service: 'gmail',
+    auth: {
+      user: 'nagy.ervin59@gmail.com',
+      pass: 'Goalstriker599a'
+    }
+  });
+  
+ 
 var bp = require('body-parser');
 const cors = require('cors');
-const nocaches = require('nocache');
 
 var server = https.createServer({
     key: fs.readFileSync(__dirname + '/ssl/server.key'),
     cert: fs.readFileSync(__dirname + '/ssl/server.cert')
 },app).listen(8080);
 
-function nocache(req, res, next) {
-    res.header('Cache-Control', 'private, no-cache, no-store, must-revalidate');
-    res.header('Expires', '-1');
-    res.header('Pragma', 'no-cache');
-    next();
-  }
-app.use(nocaches());
 
 app.use(bp()); 
 
@@ -38,14 +57,17 @@ var storage = multer.diskStorage({
     cb(null, date + path.extname(file.originalname)) //Appending extension
   }
 })
-
 var upload = multer({ storage: storage });
 
+//------------------END OF SERVICECODE------------------//
+//////////////////////////////////////////////////////
+//------------------START OF USE------------------//
 app.use('/images',express.static(__dirname + '/uploads'));
 app.use('/public', express.static(path.join(__dirname, "/public")));
-///test mini dbs//////////////////////////
+//------------------END OF USE------------------//
+//////////////////////////////////////////////////////
+//------------------START OF CONSTANTS------------------//
 const modifyhash = "9917d774b0857f868ebf9c81dea3e43c4d337529fe1d8d3a73362a5d869dc42b";
-
 const usersdb = [{
     name: 'Molnár kata',
     quote: "This is my quoute",
@@ -68,11 +90,11 @@ const usersdb = [{
 {
     name: 'Isten',
     quote: "Alvilág genyó",
-    code: 666,
+    code: 255,
     status: 0,
     minutes:332,
     avatar: 'https://lh3.googleusercontent.com/proxy/JUV7RjoBTz4OftF0sbrrWbZniHQOh2jLmRpV2g3SNuikB9dLgAAkZiJnm1WILbiFeDWdmNjVuxsmaG-gb4ICuETH7OhwRNWkTNjSU6-kFzESev-r3nxbrDVQHsYvC4m4',
-    password : 'pss',
+    password : 'Avatatjana',
     admin : true,
     messages: [
         {
@@ -84,43 +106,14 @@ const usersdb = [{
         }
     ]
 }]
-const adminpass = usersdb[1].password;
-//////////////////////////////////////////
-
-const DeleteUser = (userid,sockedid) =>{
-    let found = false;
-    console.log("DeleteIniateted: " + userid + "\tFrom socket: " + sockedid)
-    for (let index = 0; index < usersdb.length; index++) {
-        const element = usersdb[index];
-        if(element.code == userid){
-            found = true;
-            if(element.admin == false){
-                usersdb.splice(index,1);
-                console.log("Deleted user: " + userid);
-                io.to(sockedid).emit('modifyanswer',{
-                    status : 0,
-                    message : `A(z) ${userid} kódú felhasználó fiókja ki lett törölve`
-                   })
-                   io.emit('event',usersdb);
-            }
-            else{
-                console.log("Cannot delete admin user: " + userid);
-                io.to(sockedid).emit('modifyanswer',{
-                    status : -1,
-                    message : `Admin fiókot nem lehet törölni`
-                   })
-            }
-        }
-        
-    }
-    if(!found){
-        io.to(sockedid).emit('modifyanswer',{
-            status : 1,
-            message : `Nincs ilyen felhasználó`
-           })
-    }
-}
-
+var adminpass = '';
+var adminid = 0;
+database('login')
+.where({ admin: true })
+.then(function(rows) { adminpass = rows[0].hash; adminid = rows[0].code})
+//------------------END OF CONSTANTS------------------//
+//////////////////////////////////////////////////////
+//------------------START OF METHODS------------------//
 
 function makeid(length) {
     var result           = '';
@@ -131,6 +124,11 @@ function makeid(length) {
     }
     return result;
  }
+//------------------END OF METHODS------------------//
+//////////////////////////////////////////////////////
+//------------------START OF ROUTES------------------//
+
+
 app.post('/message',function(req,res){
     if(adminConnected != ''){
         if (req.body.adminpass == adminpass) {
@@ -157,32 +155,44 @@ app.post('/message',function(req,res){
 app.post('/upload', upload.single('avatar'), (req, res) => {
     
     const password = makeid(11);
-    console.log(password)
-    let user = {
-        name: req.body.name,
-        quote: req.body.quote,
-        code: parseInt(req.body.code),
-        status: 0,
-        avatar: 'http://192.168.1.69:4000/images/' + identifier,
-        password : password,
-        admin : false,
-        minutes: parseInt(req.body.minutes),
-        messages: [
-            {
-                title: "Üdvözlünk az Angyalvonalon",
-                message: "Ha bármilyen kérdésed lenne lépj kapcsolatba az adminisztrátorral"
-            }
-        ]
-    }
-    usersdb.push(user);
-    io.to(req.body.socketid).emit('adminow',usersdb)
-    io.to(req.body.socketid).emit('modifyanswer',{
-        status : 0,
-        message : `A(z) ${req.body.code} kódú felhasználó sikeresen létre lett hozva és a jelszó hozzá \t\t>> ${password}`
-       })
-    io.emit('event',usersdb);
+    const hash = bcrypt.hashSync(password,10);
 
-   
+    console.log(hash + ">> for user >> " + req.body.code);
+    database.transaction(trx =>{
+        trx.insert({
+            code: parseInt(req.body.code),
+            hash: hash,
+            admin: false
+        }).into('login')
+        .returning('code')
+        .then(returningCode => {
+            return trx('users')
+            .returning('*')
+            .insert({
+                name: req.body.name,
+                quote: req.body.quote,
+                code: parseInt(returningCode),
+                status: 0,
+                avatar: 'https://192.168.1.69:8080/images/' + identifier
+           }).then(response => console.log(response)).then(res.sendStatus(200)).catch(e => console.log("ERROR" + e));
+        }).then(trx.commit).then(
+            database('users').select('*').then(response => io.emit('event',response))
+           ).then(
+            database('users').select('*').then(response => io.to(req.body.sockedid).emit('adminow',response.map((user,i)=>{
+                user.minutes = 99;
+                return user;
+            })))
+           ).then(io.to(req.body.socketid).emit('modifyanswer',{
+            status : 0,
+            message : `A(z) ${req.body.code} kódú felhasználó sikeresen létre lett hozva és a jelszó hozzá \t\t>> ${password}`
+           }))
+        .catch(trx.rollback)
+    }).catch(e => console.log("ERROR" + e));
+    
+    
+
+
+    
 });
 app.post('/loginverify', function(req, res){
     console.log(Date.now() + " POST "+ req.url)
@@ -234,38 +244,96 @@ app.get('/testrt',function(req,res){
     res.sendStatus(200);
 
 
-})
+});
+//Avatatjana
+
 app.post('/adminow',function(req,res){
-    if(req.body.adminpass ==  adminpass){
-        io.to(req.body.sockedid).emit('adminow',usersdb)
-    }
-    else{
-        console.log("wrong admin");
-    }
+
+    const pss = "Avatatjana";
+    console.log("adminow");
+    bcrypt.compare(req.body.adminpass,adminpass,(err,result)=>{
+        if(result){
+            database('users').select('*').then(response => io.to(req.body.sockedid).emit('adminow',response.map((user,i)=>{
+                user.minutes = 99;
+                if(user.code != adminid){
+                    user.admin = false;
+                }
+                else{
+                    user.admin = true;
+                }
+                return user;
+            })));
+            
+        }else{
+            console.log("Acces Denied to unatohrized admin");
+        }
+    })
+    
     res.sendStatus(200);
 })
 app.post('/modify',function(req,res){
     if(req.body.sockedid != 0 ){
-               if(req.body.adminpass == adminpass){
-                    if(req.body.mode == "delete"){
-                         DeleteUser(req.body.toDeleteID,req.body.socketid);
-                    }else if(req.body.mode == "new"){
-                        CreateUser(req.body.userdetails);
+       
+        console.log("DeleteIniateted: " + req.body.toDeleteID + "\tFrom socket: " + req.body.socketid)
+        bcrypt.compare(req.body.adminpass,adminpass,(err,result)=>{
+            if(result){
+                
+               database('login').where({
+                   code : req.body.toDeleteID
+               }).then(response => 
+                    {   
+                        if(!response[0].admin){
+                        database('login').where({
+                            code : req.body.toDeleteID
+                        }).del().catch(resp => console.log("cannot"));
+                        database('users').where({
+                            code : req.body.toDeleteID
+                        }).del().catch(resp => console.log("cannot")).then(
+                            io.to(req.body.socketid).emit('modifyanswer',{
+                                status : 0,
+                                message : `A(z) ${req.body.toDeleteID} kódú felhasználó sikeresen törölve lett`
+                            })
+                        ).then(setTimeout(function(){ database('users').select('*').then(response => io.emit('event',response)); }, 200));
+                        
+                    }else{
+                        console.log("ADMIN CANNOT BE DELETED")
+                        io.to(req.body.socketid).emit('modifyanswer',{
+                            status : -1,
+                            message : `A(z) ${req.body.toDeleteID} kódú felhasználót nem lehet törölni mivel Admin`
+                        })
+                        
+                    }}
+                
+                ).catch(e => {
+                    if(e != null){
+                        console.log(e)
+                        io.to(req.body.socketid).emit('modifyanswer',{
+                            status : 1,
+                            message : `A(z) ${req.body.toDeleteID} kódú felhasználót nem lehet törölni mivel nem találja a rendszer`
+                        })
                     }
-                    else{
-                        io.to(req.body.socketid).emit('logincheck', {
-                            succes : false,
-                            reason : "ACCES DENIED"
-                        });     
-                    }
-               }else
-               {
+                }).then(
+                    database('users').select('*').then(response => io.emit('event',response)).then(
+                        database('users').select('*').then(response => io.to(req.body.sockedid).emit('adminow',response.map((user,i)=>{
+                            user.minutes = 99;
+                            if(user.code != adminid){
+                                user.admin = false;
+                            }
+                            else{
+                                user.admin = true;
+                            }
+                            return user;
+                        })))
+                    )
+                )
+                
+            }else{
                 io.to(req.body.socketid).emit('logincheck', {
                     succes : false,
                     reason : "ACCES DENIED"
                 }); 
-               }
-
+            }
+        })  
     }
     else{
         io.to(req.body.socketid).emit('logincheck', {
@@ -297,9 +365,8 @@ app.post('/statuschange', function(req, res){
     });
   });
 io.on("connection", (socket) => {
-
     console.log("New socket connected:\t" + socket.id);
-    io.emit('event',usersdb)
+    database('users').select('*').then(response => io.emit('event',response));
     socket.on('disconnect', function() {
         if(socket.id == adminConnected){
             adminConnected = '';
@@ -309,18 +376,32 @@ io.on("connection", (socket) => {
 app.post('/email',(req,res) =>{
  
     console.log("Emali");
-    console.log(req.body)
-
+    console.log(req.body.email)
+    var mailOptions = {
+        from: 'AngyalMailer',
+        to: 'nagy.ervin59@gmail.com',
+        subject: 'Angyalvonal Mailer: ' + req.body.name,
+        text: req.body.message +  '\n Email: ' + req.body.email
+      };
+      
+      transporter.sendMail(mailOptions, function(error, info){
+        if (error) {
+          console.log(error);
+        } else {
+          console.log('Email sent: ' + info.response);
+        }
+      });
 });
 
-app.get('/',nocache,(req,res) =>{
+app.get('/',(req,res) =>{
     res.sendFile(path.resolve(__dirname, '.', 'index.html'));       
-    io.emit('event',usersdb)
     
 })
-app.get('*', nocache,(req, res) => {     
+app.get('*',(req, res) => {     
     
     res.sendFile(path.resolve(__dirname, '.', 'index.html'));              
    
                      
   });
+
+  //------------------END OF ROUTES------------------//
