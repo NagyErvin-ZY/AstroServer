@@ -127,7 +127,53 @@ function makeid(length) {
          code:userCode
      }).del().then(resp => console.log(resp))
  }
- removeMessagges(23);
+const getMinutes = async (id) =>{
+    var minutes = 0;
+   
+    await database('entries').where(
+        {code : id}
+    )
+    .orderBy('time','asc')
+    .then(response => {
+        console.log(response)
+        for (let index = 1; index < response.length; index++) {
+
+            const previousElement = response[index-1];
+            const currentElement = response[index];
+            if (previousElement.status == 2 && currentElement.status != 2) {
+                let ms = (currentElement.time- previousElement.time) / 60000;
+                console.log(minutes + " id: " + id)
+                minutes += Math.ceil(ms);
+            }
+            
+        }
+        
+    }) 
+    return minutes;
+}
+const adminow = async (socketid) =>{
+    let idArrays = [];
+            await database('users')
+            .select('*')
+            .returning('code')
+            .then( resp  => idArrays =  resp.map((user,i)=>{ return user.code })    );
+            
+            
+            let minutesArray = await getMinutesArrayed(idArrays);
+            console.log(idArrays)
+            console.log(minutesArray)
+            database('users').select('*').then(response => io.to(socketid).emit('adminow',response.map((user,i)=>{
+                
+                user.minutes = minutesArray[idArrays.indexOf(user.code)];
+                if(user.code != adminid){
+                    user.admin = false;
+                }
+                else{
+                    user.admin = true;
+                }
+                return user;
+            })))
+}
 //------------------END OF METHODS------------------//
 //////////////////////////////////////////////////////
 //------------------START OF ROUTES------------------//
@@ -175,7 +221,7 @@ app.post('/message',async function(req,res){
         }
         res.sendStatus(200);
 })
-app.post('/upload', upload.single('avatar'), (req, res) => {
+ app.post('/upload',  upload.single('avatar'), (req, res) => {
     
     const password = makeid(11);
     const hash = bcrypt.hashSync(password,10);
@@ -200,7 +246,7 @@ app.post('/upload', upload.single('avatar'), (req, res) => {
             database('users').select('*').then(response => io.emit('event',response))
            ).then(
             database('users').select('*').then(response => io.to(req.body.sockedid).emit('adminow',response.map((user,i)=>{
-                user.minutes = 99;
+                user.minutes = 0;
                 return user;
             })))
            )
@@ -226,8 +272,12 @@ app.post('/upload', upload.single('avatar'), (req, res) => {
 
     
 });
-app.post('/loginverify', function(req, res){
-    let good = false;
+app.post('/loginverify', async function(req, res){
+   let minute = 0;
+   await getMinutes(req.body.userid)
+   .then(response => {
+        minute = response
+   }).catch(console.log("No such user: " + req.body.userid))
     if(req.body.socketid != null){
        database('login').where({
            code : req.body.userid
@@ -243,12 +293,11 @@ app.post('/loginverify', function(req, res){
                             .where({
                                 code : req.body.userid
                             }).then(responseMessages=>{
-                                console.log(responseUser[0])
                                 io.to(req.body.socketid).emit('logincheck', {
                                     loggedIn : true ,
                                     name : responseUser[0].name,
                                     status: responseUser[0].status,
-                                    minutes : 90,
+                                    minutes : minute,
                                     messages : responseMessages.reverse(),
                                     hash: modifyhash});
                                  if(response[0].admin){
@@ -279,22 +328,23 @@ app.post('/loginverify', function(req, res){
     }
 
 });
-app.post('/adminow',function(req,res){
 
+const getMinutesArrayed = async (idArray) =>{
+    let RetArray = []
+    for (let index = 0; index < idArray.length; index++) {
+        const element = idArray[index];
+        await getMinutes(element)
+        .then(response=>{RetArray.push(response)})
+    }
+    return RetArray
+}
+app.post('/adminow',async function(req,res){
+    
     const pss = "Avatatjana";
     console.log("adminow");
-    bcrypt.compare(req.body.adminpass,adminpass,(err,result)=>{
+    bcrypt.compare(req.body.adminpass,adminpass,async(err,result)=>{
         if(result){
-            database('users').select('*').then(response => io.to(req.body.sockedid).emit('adminow',response.map((user,i)=>{
-                user.minutes = 99;
-                if(user.code != adminid){
-                    user.admin = false;
-                }
-                else{
-                    user.admin = true;
-                }
-                return user;
-            })));
+            adminow(req.body.sockedid);
             
         }else{
             console.log("Acces Denied to unatohrized admin");
@@ -303,9 +353,10 @@ app.post('/adminow',function(req,res){
     
     res.sendStatus(200);
 })
+
 app.post('/modify',function(req,res){
     if(req.body.sockedid != 0 ){
-       
+       var socketid = req.body.sockedid
         console.log("DeleteIniateted: " + req.body.toDeleteID + "\tFrom socket: " + req.body.socketid)
         bcrypt.compare(req.body.adminpass,adminpass,(err,result)=>{
             if(result){
@@ -318,13 +369,19 @@ app.post('/modify',function(req,res){
                         database('login').where({
                             code : req.body.toDeleteID
                         }).del().catch(resp => console.log("cannot"));
-                        database('users').where({
+
+                        database('entries').where({
+                            code : req.body.toDeleteID
+                        }).del()
+                        .then( database('users').where({
                             code : req.body.toDeleteID
                         }).del().catch(resp => console.log("cannot")).then(
                             io.to(req.body.socketid).emit('modifyanswer',{
                                 status : 0,
                                 message : `A(z) ${req.body.toDeleteID} kódú felhasználó sikeresen törölve lett`
-                            })
+                            })).catch(console.log("Delte error"))
+                       
+                            
                         ).then(setTimeout(function(){ database('users').select('*').then(response => io.emit('event',response)); }, 200));
                         
                     }else{
@@ -345,19 +402,9 @@ app.post('/modify',function(req,res){
                         })
                     }
                 }).then(
-                    database('users').select('*').then(response => io.emit('event',response)).then(
-                        database('users').select('*').then(response => io.to(req.body.sockedid).emit('adminow',response.map((user,i)=>{
-                            user.minutes = 99;
-                            if(user.code != adminid){
-                                user.admin = false;
-                            }
-                            else{
-                                user.admin = true;
-                            }
-                            return user;
-                        })))
-                    )
-                ).then(removeMessagges(req.body.toDeleteID))
+                    adminow(socketid)
+                )
+            .then(removeMessagges(req.body.toDeleteID))
                 
             }else{
                 io.to(req.body.socketid).emit('logincheck', {
@@ -384,17 +431,17 @@ app.post('/statuschange', async function(req, res){
         .catch(err => console.log(err))
          database
         .table('users')
-        .orderBy('code', 'desc').select('*').then(response => io.to(adminConnected).emit('adminow',response.map((user,i)=>{
-            console.log(adminConnected)
-            user.minutes = 99;
-            if(user.code != adminid){
-                user.admin = false;
-            }
-            else{
-                user.admin = true;
-            }
-            return user;
-        })))
+        .orderBy('code', 'desc').select('*')
+        .then(
+            database('entries')
+            .insert({
+                time: Date.now(),
+                code: req.body.code,
+                status: req.body.status,
+            })
+            .then(resp => console.log(resp))
+        ).then(adminow(adminConnected))
+        
          database
         .table('users')
         .orderBy('code', 'desc').select('*').then(response => io.emit('event',response))
@@ -409,7 +456,10 @@ io.on("connection", (socket) => {
     activeConnections++;
     console.log("Active connections >> " + activeConnections);
     allConnections++;
-    database('users').select('*').then(response => io.emit('event',response));
+    database
+    .table('users')
+    .orderBy('code', 'desc')
+    .then(response => io.emit('event',response));
     socket.on('disconnect', function() {
         activeConnections--;
         console.log("Active connections >> " + activeConnections);
@@ -450,3 +500,4 @@ process.on('unhandledRejection', (error, promise) => {
     console.log(' The error was: ', error );
   });
   //------------------END OF ROUTES------------------//
+ 
