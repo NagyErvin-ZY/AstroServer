@@ -1,14 +1,12 @@
 //------------------START OF SERVICECODE------------------//
-var app = require('express')();
-var path = require('path');
-var fs = require('fs');
+const app = require('express')();
+const path = require('path');
+const fs = require('fs');
 const express = require('express');
-var https = require('https');
-var nodemailer = require('nodemailer');
+const https = require('https');
+const nodemailer = require('nodemailer');
 const knex = require('knex');
 const bcrypt = require('bcrypt');
-
-
 const database = knex({
 client: 'pg',
 connection: {
@@ -19,32 +17,22 @@ connection: {
 }
 
 });
-
-
-
-var transporter = nodemailer.createTransport({
+const transporter = nodemailer.createTransport({
     service: 'gmail',
     auth: {
       user: 'nagy.ervin59@gmail.com',
       pass: 'Goalstriker599a'
     }
   });
-  
- 
-var bp = require('body-parser');
+  const bp = require('body-parser');
 const cors = require('cors');
-
-var server = https.createServer({
+const server = https.createServer({
     key: fs.readFileSync(__dirname + '/ssl/server.key'),
     cert: fs.readFileSync(__dirname + '/ssl/server.cert')
 },app).listen(8080);
-
-
 app.use(bp()); 
-
-var io = require('socket.io').listen(server);
+const io = require('socket.io').listen(server);
 const multer = require('multer');
-
 var adminConnected = '';
 var identifier = '';
 var storage = multer.diskStorage({
@@ -57,8 +45,7 @@ var storage = multer.diskStorage({
     cb(null, date + path.extname(file.originalname)) //Appending extension
   }
 })
-var upload = multer({ storage: storage });
-
+const upload = multer({ storage: storage });
 //------------------END OF SERVICECODE------------------//
 //////////////////////////////////////////////////////
 //------------------START OF USE------------------//
@@ -108,13 +95,14 @@ const usersdb = [{
 }]
 var adminpass = '';
 var adminid = 0;
+var activeConnections = 0;
+var allConnections= 0;
 database('login')
 .where({ admin: true })
 .then(function(rows) { adminpass = rows[0].hash; adminid = rows[0].code})
 //------------------END OF CONSTANTS------------------//
 //////////////////////////////////////////////////////
 //------------------START OF METHODS------------------//
-
 function makeid(length) {
     var result           = '';
     var characters       = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
@@ -124,40 +112,73 @@ function makeid(length) {
     }
     return result;
  }
+
+ const addMessage = (userCode,userTitle,userMessage) => {
+     database('messages')
+     .insert({
+         code: userCode,
+         title: userTitle,
+         message: userMessage
+     }).then(resp => console.log(resp))
+ }
+ const removeMessagges = (userCode) =>{
+     database('messages')
+     .where({
+         code:userCode
+     }).del().then(resp => console.log(resp))
+ }
+ removeMessagges(23);
 //------------------END OF METHODS------------------//
 //////////////////////////////////////////////////////
 //------------------START OF ROUTES------------------//
+app.post('/rootacces',function(req,res){
+    if (req.body.password != null) {
+        bcrypt.compare(req.body.password,adminpass,function(err, result){
+            if (result) {
+                console.log(">>\tRoot acces granted\t<<")
+                    
+                    switch (req.body.function) {
+                        case 'resetpass':
 
-
-app.post('/message',function(req,res){
-    if(adminConnected != ''){
-        if (req.body.adminpass == adminpass) {
-            console.log("Admin message request");
-           usersdb.forEach(element => {
-                if(element.code == req.body.code){
-                    let message = {
-                        title: req.body.title,
-                        message: req.body.message
+                            break;
+                        case 'forcestatus':
+                            break;
+                        case 'stats':
+                            res.send(`Angyalvonal website\tAstroweb mainframe statistics\n>>Date>>${Date.now()}<<\nActive:${activeConnections}\nAll conenctions existed:${allConnections}`);
+                            break;
+                        default:
+                            res.send("Avalible functions for root:\n-resetpass\n-forcestatus\n-stats");
+                            break;
                     }
-                    console.log("Admin message request DONE");
-                    element.messages.push(message);
-                    io.to(req.body.socketid).emit('modifyanswer',{
-                        status : 0,
-                        message : `A(z) ${req.body.code} kódú felhasználónak az üzenet sikeresen el lett küldve`
-                       })
-                       console.log(req.body)
-                    console.log(element.messages);
                 }
-            });
-        }}
+                else{
+                    res.send("Bad root");
+                }
+        })
+    }else{
+        res.send("Bad root");
+    }
+        
+    
+})
+app.post('/message',async function(req,res){
+    if(adminConnected != ''){
+        bcrypt.compare(req.body.adminpass,adminpass,(err,result)=>{
+            if(result){
+                 addMessage(parseInt(req.body.code),req.body.title,req.body.message);
+                io.to(req.body.socketid).emit('modifyanswer',{
+                    status : 0,
+                    message : `A(z) ${req.body.code} kódú felhasználónak az üzenet sikeresen el lett küldve`
+                })
+            }
+        })
+        }
         res.sendStatus(200);
 })
 app.post('/upload', upload.single('avatar'), (req, res) => {
     
     const password = makeid(11);
     const hash = bcrypt.hashSync(password,10);
-
-    console.log(hash + ">> for user >> " + req.body.code);
     database.transaction(trx =>{
         trx.insert({
             code: parseInt(req.body.code),
@@ -182,12 +203,23 @@ app.post('/upload', upload.single('avatar'), (req, res) => {
                 user.minutes = 99;
                 return user;
             })))
-           ).then(io.to(req.body.socketid).emit('modifyanswer',{
+           )
+        .catch(trx.rollback)
+    }).then(
+        io.to(req.body.socketid).emit('modifyanswer',{
             status : 0,
             message : `A(z) ${req.body.code} kódú felhasználó sikeresen létre lett hozva és a jelszó hozzá \t\t>> ${password}`
-           }))
-        .catch(trx.rollback)
-    }).catch(e => console.log("ERROR" + e));
+           })
+    )
+    .catch(e => {
+        if(e){
+        io.to(req.body.socketid).emit('modifyanswer',{
+            status : 1,
+            message : `A(z) ${req.body.code} kódú felhasználó már létezik`
+           })
+    }
+
+}).then(addMessage(req.body.code,"Üdvözlünk az Angyalvonalon!","Ha bármilyen kérdésed van fordulj az adminisztrátorhoz"));
     
     
 
@@ -195,58 +227,58 @@ app.post('/upload', upload.single('avatar'), (req, res) => {
     
 });
 app.post('/loginverify', function(req, res){
-    console.log(Date.now() + " POST "+ req.url)
     let good = false;
     if(req.body.socketid != null){
-        let socketids = req.body.sockedid;
-        usersdb.forEach(element =>{
-            if((element.code == req.body.userid) && (element.password == req.body.password) && (element.admin == req.body.admin)){
-               {
-                   io.to(req.body.socketid).emit('logincheck', {
-                    loggedIn : true ,
-                     name : element.name,
-                    status: element.status,
-                    minutes : element.minutes,
-                messages : element.messages,
-                    hash: modifyhash});
-                 if(req.body.admin == true){
-                     console.log("ADMIN JOINED");
-                     adminConnected = req.body.socketid
-                 }
-                    good = true;
-                  }
-            
-            }
-            else{
-                
-            }
-        })
-        
-        
-    }else{
+       database('login').where({
+           code : req.body.userid
+       })
+       .then(response => {
+           bcrypt.compare(req.body.password,response[0].hash,(err,result)=>{
+               if(result){
+                    if(response[0].admin == req.body.admin){
+                        database('users').where({
+                            code : req.body.userid
+                        }).then(responseUser => {
+                            database('messages')
+                            .where({
+                                code : req.body.userid
+                            }).then(responseMessages=>{
+                                console.log(responseUser[0])
+                                io.to(req.body.socketid).emit('logincheck', {
+                                    loggedIn : true ,
+                                    name : responseUser[0].name,
+                                    status: responseUser[0].status,
+                                    minutes : 90,
+                                    messages : responseMessages.reverse(),
+                                    hash: modifyhash});
+                                 if(response[0].admin){
+                                     console.log("ADMIN JOINED");
+                                     adminConnected = req.body.socketid
+                                 }
+                            })
+                        })
+                    }
+               }
+               else{
+                io.to(req.body.socketid).emit('logincheck', {
+                    loggedIn : false });
+                res.sendStatus(200);
+               }
+           })
+       }).catch(err =>{
         io.to(req.body.socketid).emit('logincheck', {
             loggedIn : false });
-         
-    }
-    if(!good){
+        res.sendStatus(200);
+    })
+    
+    }else
+    {
         io.to(req.body.socketid).emit('logincheck', {
-            loggedIn : false
-
-    });
-       
+            loggedIn : false });
+        res.sendStatus(200);
     }
-    res.sendStatus(200);
 
 });
-app.get('/testrt',function(req,res){
-    console.log(Date.now() + " GET "+ req.url)
-    usersdb[1].status = 0;
-    res.sendStatus(200);
-
-
-});
-//Avatatjana
-
 app.post('/adminow',function(req,res){
 
     const pss = "Avatatjana";
@@ -325,7 +357,7 @@ app.post('/modify',function(req,res){
                             return user;
                         })))
                     )
-                )
+                ).then(removeMessagges(req.body.toDeleteID))
                 
             }else{
                 io.to(req.body.socketid).emit('logincheck', {
@@ -343,31 +375,44 @@ app.post('/modify',function(req,res){
     }
     res.sendStatus(200);
 })
-app.post('/statuschange', function(req, res){
-    
-    usersdb.forEach(element => {
-        if(element.code == req.body.code){
-            if(req.body.hash === modifyhash)
-            {
-                
-                element.status = parseInt(req.body.status);
-                console.log(Date.now() + ">>\tUserID" + req.body.code + " Status:" + req.body.status)
-                io.emit('event',usersdb);
-                if(adminConnected != ''){
-                     io.to(adminConnected).emit('adminow',usersdb);
-                }
-                res.sendStatus(200);
-            }else{
-                res.send("ACCES DENIED")
+app.post('/statuschange', async function(req, res){
+    if(req.body.hash === modifyhash)
+    {
+       await database('users')
+        .where({ code: req.body.code })
+        .update({ status: req.body.status })
+        .catch(err => console.log(err))
+         database
+        .table('users')
+        .orderBy('code', 'desc').select('*').then(response => io.to(adminConnected).emit('adminow',response.map((user,i)=>{
+            console.log(adminConnected)
+            user.minutes = 99;
+            if(user.code != adminid){
+                user.admin = false;
             }
-            
-        }
-    });
+            else{
+                user.admin = true;
+            }
+            return user;
+        })))
+         database
+        .table('users')
+        .orderBy('code', 'desc').select('*').then(response => io.emit('event',response))
+
+        res.sendStatus(200)
+    }
+    else{
+        res.send("ACCES DENIED")
+    }
   });
 io.on("connection", (socket) => {
-    console.log("New socket connected:\t" + socket.id);
+    activeConnections++;
+    console.log("Active connections >> " + activeConnections);
+    allConnections++;
     database('users').select('*').then(response => io.emit('event',response));
     socket.on('disconnect', function() {
+        activeConnections--;
+        console.log("Active connections >> " + activeConnections);
         if(socket.id == adminConnected){
             adminConnected = '';
             console.log("ADMIN OFFLINE");
@@ -375,8 +420,6 @@ io.on("connection", (socket) => {
 });
 app.post('/email',(req,res) =>{
  
-    console.log("Emali");
-    console.log(req.body.email)
     var mailOptions = {
         from: 'AngyalMailer',
         to: 'nagy.ervin59@gmail.com',
@@ -392,7 +435,6 @@ app.post('/email',(req,res) =>{
         }
       });
 });
-
 app.get('/',(req,res) =>{
     res.sendFile(path.resolve(__dirname, '.', 'index.html'));       
     
@@ -402,6 +444,9 @@ app.get('*',(req, res) => {
     res.sendFile(path.resolve(__dirname, '.', 'index.html'));              
    
                      
+});
+process.on('unhandledRejection', (error, promise) => {
+    console.log(' Oh Lord! We forgot to handle a promise rejection here: ', promise);
+    console.log(' The error was: ', error );
   });
-
   //------------------END OF ROUTES------------------//
