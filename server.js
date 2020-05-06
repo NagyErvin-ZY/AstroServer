@@ -237,7 +237,7 @@ app.post('/message',async function(req,res){
                 bank: req.body.bank,
                 cost: req.body.price,
                 bank: req.body.bank,
-                desciptrion: req.body.desciptrion,
+                desciptrion: req.body.desciptrion
                 name: req.body.name,
                 quote: req.body.quote,
                 code: parseInt(returningCode),
