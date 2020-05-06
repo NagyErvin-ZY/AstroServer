@@ -31,6 +31,7 @@ const server = https.createServer({
     cert: fs.readFileSync(__dirname + '/ssl/server.cert')
 },app).listen(8080);
 app.use(bp()); 
+app.use(cors());
 const io = require('socket.io').listen(server);
 const multer = require('multer');
 var adminConnected = '';
@@ -125,7 +126,7 @@ function makeid(length) {
      database('messages')
      .where({
          code:userCode
-     }).del().then(resp => console.log(resp))
+     }).del().then()
  }
 const getMinutes = async (id) =>{
     var minutes = 0;
@@ -135,14 +136,12 @@ const getMinutes = async (id) =>{
     )
     .orderBy('time','asc')
     .then(response => {
-        console.log(response)
         for (let index = 1; index < response.length; index++) {
 
             const previousElement = response[index-1];
             const currentElement = response[index];
             if (previousElement.status == 2 && currentElement.status != 2) {
                 let ms = (currentElement.time- previousElement.time) / 60000;
-                console.log(minutes + " id: " + id)
                 minutes += Math.ceil(ms);
             }
             
@@ -160,8 +159,7 @@ const adminow = async (socketid) =>{
             
             
             let minutesArray = await getMinutesArrayed(idArrays);
-            console.log(idArrays)
-            console.log(minutesArray)
+            
             database('users').select('*').then(response => io.to(socketid).emit('adminow',response.map((user,i)=>{
                 
                 user.minutes = minutesArray[idArrays.indexOf(user.code)];
@@ -236,12 +234,16 @@ app.post('/message',async function(req,res){
             return trx('users')
             .returning('*')
             .insert({
+                bank: req.body.bank,
+                cost: req.body.price,
+                bank: req.body.bank,
+                desciptrion: req.body.desciptrion,
                 name: req.body.name,
                 quote: req.body.quote,
                 code: parseInt(returningCode),
                 status: 0,
                 avatar: 'https://192.168.1.69:8080/images/' + identifier
-           }).then(response => console.log(response)).then(res.sendStatus(200)).catch(e => console.log("ERROR" + e));
+           }).then(res.sendStatus(200)).catch(e => console.log("ERROR" + e));
         }).then(trx.commit).then(
             database('users').select('*').then(response => io.emit('event',response))
            ).then(
@@ -439,7 +441,7 @@ app.post('/statuschange', async function(req, res){
                 code: req.body.code,
                 status: req.body.status,
             })
-            .then(resp => console.log(resp))
+            .then()
         ).then(adminow(adminConnected))
         
          database
