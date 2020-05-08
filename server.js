@@ -7,6 +7,13 @@ const https = require('https');
 const nodemailer = require('nodemailer');
 const knex = require('knex');
 const bcrypt = require('bcrypt');
+
+var http = require('http');
+http.createServer(function (req, res) {
+    res.writeHead(301, { "Location": "https://" + req.headers['host'] + req.url });
+    res.end();
+}).listen(80);
+
 const database = knex({
 client: 'pg',
 connection: {
@@ -18,14 +25,18 @@ connection: {
 
 });
 const transporter = nodemailer.createTransport({
-    service: 'gmail',
+    pool: true,
+    host: "cpanel8.rackforest.com",
+    port: 465,
+    secure: true, // use TLS
     auth: {
-      user: 'nagy.ervin59@gmail.com',
-      pass: 'Goalstriker599a'
+      user: "admin@angyalvonal.hu",
+      pass: "Brendon2005"
     }
   });
   const bp = require('body-parser');
 const cors = require('cors');
+
 const server = https.createServer({
     key: fs.readFileSync(__dirname + '/ssl/server.key'),
     cert: fs.readFileSync(__dirname + '/ssl/server.cert')
@@ -56,44 +67,6 @@ app.use('/public', express.static(path.join(__dirname, "/public")));
 //////////////////////////////////////////////////////
 //------------------START OF CONSTANTS------------------//
 const modifyhash = "9917d774b0857f868ebf9c81dea3e43c4d337529fe1d8d3a73362a5d869dc42b";
-const usersdb = [{
-    name: 'Molnár kata',
-    quote: "This is my quoute",
-    code: 646,
-    status: 0,
-    avatar: 'https://192.168.1.69:8080/images/yodaboda.jpg',
-    password : "password",
-    admin : false,
-    minutes: 232,
-    messages: [
-        {
-            title: "TestTitle",
-            message: "testmessage lorem ipsum gecokam"
-        }, {
-            title: "TestTitle",
-            message: "testmessage lorem ipsum gecokam"
-        }
-    ]
-},
-{
-    name: 'Isten',
-    quote: "Alvilág genyó",
-    code: 255,
-    status: 0,
-    minutes:332,
-    avatar: 'https://lh3.googleusercontent.com/proxy/JUV7RjoBTz4OftF0sbrrWbZniHQOh2jLmRpV2g3SNuikB9dLgAAkZiJnm1WILbiFeDWdmNjVuxsmaG-gb4ICuETH7OhwRNWkTNjSU6-kFzESev-r3nxbrDVQHsYvC4m4',
-    password : 'Avatatjana',
-    admin : true,
-    messages: [
-        {
-            title: "TestTitle",
-            message: "testmessage lorem ipsum gecokam"
-        }, {
-            title: "TestTitle",
-            message: "testmessage lorem ipsum gecokam"
-        }
-    ]
-}]
 var adminpass = '';
 var adminid = 0;
 var activeConnections = 0;
@@ -113,7 +86,6 @@ function makeid(length) {
     }
     return result;
  }
-
  const addMessage = (userCode,userTitle,userMessage) => {
      database('messages')
      .insert({
@@ -172,6 +144,37 @@ const adminow = async (socketid) =>{
                 return user;
             })))
 }
+const emitEvent = async() =>{
+   
+    var reviewsLocal = [];
+    var usersLocal = [];
+    const send = () =>{
+        let finial = usersLocal.map((user,i)=>{
+            let reviews = reviewsLocal.map((review,i)=>{
+                console.log(review)
+                if(review.code == user.code){
+                    return review
+                }
+            }).filter(function (el) {
+                return el != null;
+              });
+              
+            user.reviews = reviews;
+            return user
+        })
+        io.emit('event',finial)
+    }
+
+    await database
+    .table('users')
+    .orderBy('code', 'desc')
+    .then(users =>   database
+                    .table('reviews')
+                    .orderBy('code', 'desc')
+                    .then( reviews  =>  reviewsLocal = reviews,usersLocal = users
+                    ))
+                    send()
+}
 //------------------END OF METHODS------------------//
 //////////////////////////////////////////////////////
 //------------------START OF ROUTES------------------//
@@ -220,7 +223,7 @@ app.post('/message',async function(req,res){
         res.sendStatus(200);
 })
  app.post('/upload',  upload.single('avatar'), (req, res) => {
-    
+    console.log(req.body)
     const password = makeid(11);
     const hash = bcrypt.hashSync(password,10);
     database.transaction(trx =>{
@@ -235,9 +238,9 @@ app.post('/message',async function(req,res){
             .returning('*')
             .insert({
                 bank: req.body.bank,
-                cost: req.body.price,
+                cost: 0,
                 bank: req.body.bank,
-                desciptrion: req.body.desciptrion
+                desciptrion: req.body.desciptrion,
                 name: req.body.name,
                 quote: req.body.quote,
                 code: parseInt(returningCode),
@@ -245,7 +248,7 @@ app.post('/message',async function(req,res){
                 avatar: 'https://192.168.1.69:8080/images/' + identifier
            }).then(res.sendStatus(200)).catch(e => console.log("ERROR" + e));
         }).then(trx.commit).then(
-            database('users').select('*').then(response => io.emit('event',response))
+            emitEvent()
            ).then(
             database('users').select('*').then(response => io.to(req.body.sockedid).emit('adminow',response.map((user,i)=>{
                 user.minutes = 0;
@@ -362,6 +365,7 @@ app.post('/modify',function(req,res){
         console.log("DeleteIniateted: " + req.body.toDeleteID + "\tFrom socket: " + req.body.socketid)
         bcrypt.compare(req.body.adminpass,adminpass,(err,result)=>{
             if(result){
+                database.table('reviews').where({code:req.body.toDeleteID}).del().then(resp => console.log(resp))
                 
                database('login').where({
                    code : req.body.toDeleteID
@@ -372,20 +376,25 @@ app.post('/modify',function(req,res){
                             code : req.body.toDeleteID
                         }).del().catch(resp => console.log("cannot"));
 
+                        database('reviews').where({
+                            code : req.body.toDeleteID
+                        }).del()
                         database('entries').where({
                             code : req.body.toDeleteID
                         }).del()
                         .then( database('users').where({
                             code : req.body.toDeleteID
-                        }).del().catch(resp => console.log("cannot")).then(
+                        }).del()
+                        
+                        
+                        .catch(resp => console.log("cannot")).then(
                             io.to(req.body.socketid).emit('modifyanswer',{
                                 status : 0,
                                 message : `A(z) ${req.body.toDeleteID} kódú felhasználó sikeresen törölve lett`
                             })).catch(console.log("Delte error"))
-                       
-                            
-                        ).then(setTimeout(function(){ database('users').select('*').then(response => io.emit('event',response)); }, 200));
-                        
+                                                 
+                        )
+                        setTimeout(emitEvent, 400) 
                     }else{
                         console.log("ADMIN CANNOT BE DELETED")
                         io.to(req.body.socketid).emit('modifyanswer',{
@@ -444,9 +453,7 @@ app.post('/statuschange', async function(req, res){
             .then()
         ).then(adminow(adminConnected))
         
-         database
-        .table('users')
-        .orderBy('code', 'desc').select('*').then(response => io.emit('event',response))
+        emitEvent()
 
         res.sendStatus(200)
     }
@@ -455,16 +462,18 @@ app.post('/statuschange', async function(req, res){
     }
   });
 io.on("connection", (socket) => {
+    
+
     activeConnections++;
     console.log("Active connections >> " + activeConnections);
     allConnections++;
     database
     .table('users')
     .orderBy('code', 'desc')
-    .then(response => io.emit('event',response));
+    .then(response => emitEvent());
     socket.on('disconnect', function() {
         activeConnections--;
-        console.log("Active connections >> " + activeConnections);
+        console.log("Active connections  >> " + activeConnections);
         if(socket.id == adminConnected){
             adminConnected = '';
             console.log("ADMIN OFFLINE");
@@ -473,12 +482,16 @@ io.on("connection", (socket) => {
 app.post('/email',(req,res) =>{
  
     var mailOptions = {
-        from: 'AngyalMailer',
-        to: 'nagy.ervin59@gmail.com',
-        subject: 'Angyalvonal Mailer: ' + req.body.name,
-        text: req.body.message +  '\n Email: ' + req.body.email
-      };
-      
+        from: 'Üzenet <info@angyalvonal.hu>',
+        to: 'info@angyalvonal.hu',
+        subject: 'Üzenet: ' + req.body.name,
+        text: req.body.message +  '\n\n\n\nEmail: ' + req.body.email + '\n\n\n\nEverest Earnings Mailer Sysyem - https://everestearnings.com'
+    };
+    console.log(req.body.review);
+    if(req.body.review == true)     {
+        mailOptions.from =  'Vélemény <info@angyalvonal.hu>'
+        mailOptions.subject = 'Vélemény'  + req.body.name
+    }
       transporter.sendMail(mailOptions, function(error, info){
         if (error) {
           console.log(error);
@@ -487,12 +500,88 @@ app.post('/email',(req,res) =>{
         }
       });
 });
+app.post('/review',(req,res) =>{
+    console.log(req.body)
+    if(req.body.sockedid != 0 ){
+         bcrypt.compare(req.body.adminpass,adminpass,(err,result)=>{
+             if(result){
+    switch (req.body.mode) {
+        case "new":
+            console.log(req.body)
+            database.table('reviews').insert({
+                code:req.body.code,
+                name: req.body.name,
+                star: req.body.stars,
+                review: req.body.review
+            }).then(resp => 
+                {
+                    if(resp){
+                        io.to(req.body.socketid).emit('modifyanswer',{
+                            status : 0,
+                            message : `Vélemény hozzáadva`
+                           })
+                    }
+                })
+
+            break;
+        case "delete":
+            if(req.body.name != ''){
+            
+
+                database.table('reviews').where({code:req.body.toDeleteID,name:req.body.name}).del().then(resp => {
+                    if(resp == 1){
+                        io.to(req.body.socketid).emit('modifyanswer',{
+                            status : 0,
+                            message : `A(z) ${req.body.toDeleteID} kódú felhasználóról a(z) ${req.body.name} című vélemény sikeresen törölve lett`
+                           })
+                    }else{
+                        console.log("name")
+                        io.to(req.body.socketid).emit('modifyanswer',{
+                            status : 1,
+                            message : `A(z) ${req.body.toDeleteID} kódú felhasználóról nincs vélemény a(z) ${req.body.name} címmel`
+                           })
+                    }
+
+                } )
+                
+
+            }else{
+
+                database.table('reviews').where({code:req.body.toDeleteID}).del().then(resp => {
+                    console.log("RESP" + resp)
+                    if(resp > 0){
+                        io.to(req.body.socketid).emit('modifyanswer',{
+                            status : 0,
+                            message : `A(z) ${req.body.toDeleteID} kódú felhasználóról a vélemények sikeresen törölve lettek`
+                           })
+                    }else{
+                        io.to(req.body.socketid).emit('modifyanswer',{
+                            status : 1,
+                            message : `A(z) ${req.body.toDeleteID} kódú felhasználóról nincs vélemény `
+                           })
+                    }
+
+
+                })
+                
+            }
+            
+                break;
+        default:
+            io.to(req.body.socketid).emit('modifyanswer',{
+                status : 0,
+                message : `Szerver oldali hiba kérem próbálkozzon újra\t\t>>`
+               })
+            break;
+      }
+    }})}res.sendStatus(200)}
+    
+    )
 app.get('/',(req,res) =>{
     res.sendFile(path.resolve(__dirname, '.', 'index.html'));       
     
 })
 app.get('*',(req, res) => {     
-    
     res.sendFile(path.resolve(__dirname, '.', 'index.html'));              
    
                      
@@ -502,4 +591,3 @@ process.on('unhandledRejection', (error, promise) => {
     console.log(' The error was: ', error );
   });
   //------------------END OF ROUTES------------------//
- 
