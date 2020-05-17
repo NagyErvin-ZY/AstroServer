@@ -7,7 +7,6 @@ const https = require('https');
 const nodemailer = require('nodemailer');
 const knex = require('knex');
 const bcrypt = require('bcrypt');
-
 var http = require('http');
 http.createServer(function (req, res) {
     res.writeHead(301, { "Location": "https://" + req.headers['host'] + req.url });
@@ -40,7 +39,7 @@ const cors = require('cors');
 const server = https.createServer({
     key: fs.readFileSync(__dirname + '/ssl/server.key'),
     cert: fs.readFileSync(__dirname + '/ssl/server.cert')
-},app).listen(8080);
+},app).listen(443);
 app.use(bp()); 
 app.use(cors());
 const io = require('socket.io').listen(server);
